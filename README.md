@@ -1,12 +1,12 @@
-# **CDM - RAG Assistant**
-**Ask questions about Clinical Data Management documents in plain English**
+# CDM RAG Assistant
+**Ask questions about Clinical Data Management documents in plain English.**
 
-The assistant searches only your own documents and always tells you exactly which file and page the answer came from.
+The assistant searches only your own documents and always tells you exactly which file and page the answer came from. Documents are classified by the folder they live in — regulatory requirements and opinion papers are kept separate and treated differently in every answer.
 
 **Example:**
 > **You ask:** *"What skills does a Clinical Data Manager need to transition to Data Science?"*
 >
-> **Assistant answers:** *"According to the SCDM Position Paper (page 7), Clinical Data Scientists need skills in... (Source: SCDM-Position-Paper.pdf, Page 7)"*
+> **Assistant answers:** *"ICH E6 requires that... (Source: ICH-E6.pdf, Page 12). The SCDM Position Paper recommends... (Source: SCDM-Position-Paper.pdf, Page 4)"*
 
 ## ⚙️ One-Time Setup
 
@@ -29,10 +29,17 @@ In Terminal, navigate to this project folder and run:
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate          # on Windows: .venv\Scripts\activate
-pip install sentence-transformers chromadb pypdf openpyxl python-docx requests tqdm jupyter ipywidgets
+pip install sentence-transformers chromadb pypdf openpyxl python-docx python-pptx requests tqdm jupyter ipywidgets
 ```
 
-### Step 3 — Open the notebook
+### Step 3 — Create the document folders
+
+```bash
+mkdir -p data/raw/regulatory
+mkdir -p data/raw/opinion
+```
+
+### Step 4 — Open the notebook
 
 ```bash
 jupyter notebook 01_rag_basics.ipynb
@@ -40,30 +47,47 @@ jupyter notebook 01_rag_basics.ipynb
 
 Run each block **from top to bottom**, in order.
 
+---
+
 ## 📁 Adding Documents
+
+### Where to put files — authority by folder
+
+The folder a file lives in determines how the assistant treats it:
+
+| Folder | Authority | Use for | LLM language |
+|--------|-----------|---------|--------------|
+| `data/raw/regulatory/` | ⚖️ Regulatory | ICH, FDA, EMA, binding standards | *must, is required, mandates, shall* |
+| `data/raw/opinion/` | 💬 Opinion | SCDM, JSCDM, white papers, position papers | *recommends, suggests, proposes, advises* |
+
+> ⚠️ Files placed anywhere else (directly in `data/raw/` for example) will cause an error when Block 3 runs — this is intentional so nothing is ever classified by accident.
 
 ### Supported file types
 
-| Format     | Extension          | How it's read                  |
-|------------|--------------------|--------------------------------|
-| PDF        | `.pdf`             | Page by page                   |
-| Excel      | `.xlsx`, `.xls`    | Each sheet becomes one section |
-| Word       | `.docx`            | Paragraph by paragraph         |
-| JSON       | `.json`            | Converted to readable text     |
-| XML        | `.xml`             | Element text extracted         |
-| CSV        | `.csv`             | Rows joined as text            |
-| Plain text | `.txt`             | Read as-is                     |
+| Format      | Extension       | How it's read                       |
+|-------------|-----------------|-------------------------------------|
+| PDF         | `.pdf`          | Page by page                        |
+| PowerPoint  | `.pptx`         | Slide by slide (incl. speaker notes)|
+| Excel       | `.xlsx`, `.xls` | Each sheet becomes one section      |
+| Word        | `.docx`         | Paragraph by paragraph              |
+| JSON        | `.json`         | Converted to readable text          |
+| XML         | `.xml`          | Element text extracted              |
+| CSV         | `.csv`          | Rows joined as text                 |
+| Plain text  | `.txt`          | Read as-is                          |
+
+> ⚠️ Old-format `.ppt` files are not supported. Open them in PowerPoint, choose File → Save As → PowerPoint Presentation (.pptx), then add the converted file.
 
 ### How to add a new document
 
-1. Copy the file into `data/raw/` (subfolders are fine):
+1. Drop the file into the correct subfolder:
    ```
-   CDM-RAG-Assistant/
-   └── data/
-       └── raw/
-           ├── your-new-document.pdf
-           └── subfolder/
-               └── another-doc.pdf
+   data/raw/
+   ├── regulatory/
+   │   ├── ICH-E6-GCP.pdf
+   │   └── FDA-21-CFR-Part-11.pdf
+   └── opinion/
+       ├── SCDM-Position-Paper-V9.pdf
+       └── JSCDM-2024-white-paper.pptx
    ```
 
 2. Re-run **Blocks 3, 4, and 5** in the notebook:
@@ -75,23 +99,39 @@ Run each block **from top to bottom**, in order.
 
 > 💡 You do **not** need to re-run Blocks 1, 2, or 6 unless you restart Jupyter.
 
+### Managing document versions
+
+| Situation | What to do |
+|-----------|------------|
+| A document has been updated and the old version is no longer valid | Delete the old file, drop in the new one with the same filename, re-run Blocks 3–5 |
+| You want to keep both versions and compare them | Rename files to include the version — e.g. `SCDM-Position-Paper-v8.pdf` and `SCDM-Position-Paper-v9.pdf` — keep both in the same subfolder, re-run Blocks 3–5. You can then ask *"What changed between v8 and v9 regarding the CDM role?"* |
+
 ## 💬 Reading the Output
 
-After asking a question you'll see two sections:
+After asking a question you will see two sections.
 
 ### Answer
-The LLM's response, drawn only from your documents.
+The LLM's response, drawn only from your documents. Language is automatically adjusted based on source authority — regulatory sources produce *must / shall / is required*, opinion sources produce *recommends / suggests / proposes*. If a regulatory and an opinion source conflict on the same point, the assistant will flag this explicitly.
 
-### Sources (sorted most relevant first)
-Each source is colour-coded by how closely it matched your question:
+### Sources
+Sources are listed with two badges each:
 
-| Colour | Score | Meaning |
-|--------|-------|---------|
-| 🟢 **HIGH** | < 0.3 | Strong match — very likely relevant |
-| 🟡 **MEDIUM** | 0.3 – 0.6 | Partial match — probably useful |
-| 🔴 **LOW** | > 0.6 | Weak match — may not add much |
+**Authority badge** — what kind of document this is:
 
-The score is a **cosine distance** (0 = identical meaning, 1 = completely unrelated). Sources are automatically deduplicated — if the same page appeared in multiple retrieved chunks, it shows only once.
+| Badge | Meaning |
+|-------|---------|
+| ⚖️ REGULATORY | Binding requirement — ICH, FDA, EMA |
+| 💬 OPINION | Professional recommendation — SCDM, JSCDM, white papers |
+
+**Relevance badge** — how closely this source matched your question (cosine distance, lower = better):
+
+| Badge | Score | Meaning |
+|-------|-------|---------|
+| 🟢 HIGH | < 0.3 | Strong match — very likely relevant |
+| 🟡 MEDIUM | 0.3 – 0.6 | Partial match — probably useful |
+| 🔴 LOW | > 0.6 | Weak match — may not add much |
+
+Regulatory sources are always listed first, then opinion sources, with both groups sorted by relevance within themselves. Sources are automatically deduplicated — if the same page appeared in multiple retrieved chunks, it shows only once.
 
 ## 🔧 Changing the AI Model
 
@@ -113,9 +153,11 @@ ollama pull llama3.2
 | Symptom | Fix |
 |---------|-----|
 | *"Cannot connect to Ollama"* | Open the Ollama app, or run `ollama serve` in Terminal |
+| *"Cannot classify: filename.pdf"* | Move the file into `data/raw/regulatory/` or `data/raw/opinion/` |
+| *"Skipped (old format): file.ppt"* | Convert to `.pptx` in PowerPoint: File → Save As → PowerPoint Presentation |
 | *"Folder not found"* | Check the `DOCS_FOLDER` path in Block 3 |
-| Answers seem wrong or vague | Rephrase your question more specifically, or increase `TOP_K` to 7 in Block 7 |
-| Block 5 is slow | Normal on the first run — the model downloads once and is cached after that |
+| Answers seem wrong or vague | Rephrase more specifically, or increase `TOP_K` to 7 in Block 7 |
+| Block 5 is slow on first run | Normal — the embedding model downloads once and is cached after that |
 | Want more precise citations | Decrease `CHUNK_SIZE` from 500 to 300 in Block 4 |
 
 ## 🗂️ Project Structure
@@ -126,34 +168,39 @@ CDM-RAG-Assistant/
 │   └── 01_rag_basics.ipynb    ← main notebook
 ├── README.md                  ← this file
 └── data/
-    └── raw/                   ← put your documents here
-        ├── subfolder/
+    └── raw/
+        ├── regulatory/        ← binding documents (ICH, FDA, EMA)
+        │   ├── ICH-E6-GCP.pdf
         │   └── ...
-        ├── *.pdf
-        ├── *.xlsx
-        └── ...
+        └── opinion/           ← position papers, white papers
+            ├── SCDM-Position-Paper-V9.pdf
+            └── ...
 ```
 
 ## ✅ Current Status
 
 | Feature | Status |
 |---------|--------|
-| Load PDFs, XLSX, DOCX, JSON, XML, CSV, TXT | ✅ |
+| Load PDF, PPTX, XLSX, DOCX, JSON, XML, CSV, TXT | ✅ |
+| Folder-based authority classification (regulatory / opinion) | ✅ |
+| Error on unclassified files — nothing slips through unchecked | ✅ |
 | Chunk text into overlapping segments | ✅ |
 | Generate embeddings (`all-MiniLM-L6-v2`) | ✅ |
 | Fast vector search (ChromaDB, cosine similarity) | ✅ |
-| Results sorted by relevance, colour-coded | ✅ |
-| Deduplicated sources in output | ✅ |
+| Regulatory sources ranked first in results | ✅ |
+| Authority-aware LLM language (must vs recommends) | ✅ |
+| Colour-coded relevance badges per source | ✅ |
+| Deduplicated, wrapped output | ✅ |
 | Local LLM via Ollama | ✅ |
 | Interactive Q&A loop (Block 8) | ✅ |
 
 ## 🔮 Future Ideas
 
-- **Hybrid search** — combine the current semantic search with keyword search (BM25) to handle specific terms, IDs, and codes that semantic similarity alone can miss
-- **Agentic retrieval** — let the LLM decide when to search again if its first results aren't sufficient, and rewrite its own search queries for better results
+- **Hybrid search** — combine semantic search with keyword search (BM25) to better handle specific terms, IDs, and codes
+- **Agentic retrieval** — let the LLM decide when to search again if first results are insufficient, and rewrite its own queries for better results
 - **Improved heading extraction** from PDFs for more accurate source references
 - **Automatic summarisation** of long document sections
 - **CLI tool** for faster queries without opening Jupyter
 - **Docker packaging** for reproducible deployment
 
-> 💡 Note: PDFs & other files are not included in this repository. Place your own reference documents in `data/raw/`.
+> 💡 Note: documents are not included in this repository. Place your own reference files in `data/raw/regulatory/` or `data/raw/opinion/`.
